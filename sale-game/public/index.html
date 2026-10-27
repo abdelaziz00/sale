@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FUT Market Radar</title>
+  <meta name="description" content="FC 27 Ultimate Team price forecasts from real price history you connect or log.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 5v9c0 7-5 12-12 14C9 28 4 23 4 16V7z' fill='%23e8c45a'/%3E%3Cpath d='M9 19l5-5 3 3 6-7' stroke='%230b0f14' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2l12 5v9c0 7-5 12-12 14C9 28 4 23 4 16V7z" fill="var(--gold)"/><path d="M9 19l5-5 3 3 6-7" stroke="var(--bg)" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <div>
+        <h1>FUT Market Radar</h1>
+        <p class="sub">FC 27 Ultimate Team · price forecasts</p>
+      </div>
+    </div>
+    <div class="live" id="liveBox" aria-live="polite">
+      <span class="dot" id="liveDot"></span>
+      <div>
+        <div class="live-label" id="liveLabel">Connecting…</div>
+        <div class="live-meta" id="liveMeta">—</div>
+      </div>
+      <button class="btn ghost" id="pauseBtn" type="button" aria-pressed="false" title="Pause auto-refresh">Pause</button>
+    </div>
+  </header>
+
+  <div id="fixtureBanner" class="banner fixture" hidden>
+    <strong>TEST FIXTURE — not market data.</strong> Synthetic players and prices used only for QA (<code id="fixtureName"></code>). Remove <code>?fixture=</code> from the URL for live data.
+  </div>
+
+  <section class="sources" id="sources" aria-label="Data sources"></section>
+
+  <details class="disclosure" id="disclosure">
+    <summary>How the data and forecasts work — read before trading</summary>
+    <div class="disclosure-body">
+      <p><strong>Market prices</strong> come only from the sources shown above. FUT.GG and FUTBIN do not publish public APIs: FUT.GG's robots.txt disallows <code>/api/*</code> and its Terms forbid automated access unless expressly permitted, and FUTBIN refuses automated clients. This dashboard therefore does <em>not</em> scrape them. You can connect a feed you are licensed to use (see <code>config.json</code> and the README), or log the prices you see on those sites with <b>Log a price</b>.</p>
+      <p><strong>Forecasts</strong> are statistical estimates from each player's recorded history: a recency-weighted trend, momentum, distance from the 7-day median, listing supply (when available) and any promotions you add to <code>data/events.json</code>. They are not guarantees and are not financial advice. Confidence reflects fit quality, sample size, volatility and data age. Profit figures include the 5% EA tax.</p>
+      <p>Nothing on this page is invented: if a source fails, its status turns red, and any players it supplied show their last known timestamp.</p>
+    </div>
+  </details>
+
+  <section class="kpis" id="kpis" aria-label="Summary"></section>
+
+  <section class="controls" aria-label="Sort and filter">
+    <label class="ctl grow"><span>Search</span><input id="fSearch" type="search" placeholder="Player name or position" autocomplete="off"></label>
+    <label class="ctl"><span>Horizon</span>
+      <select id="fHorizon"><option value="6">6 hours</option><option value="24" selected>24 hours</option><option value="72">3 days</option></select>
+    </label>
+    <label class="ctl"><span>Sort by</span>
+      <select id="fSort">
+        <option value="pct">Expected gain %</option>
+        <option value="net">Profit after tax</option>
+        <option value="change">Expected gain (coins)</option>
+        <option value="confidence">Confidence</option>
+        <option value="eta">Soonest rise</option>
+        <option value="price">Current price</option>
+        <option value="rating">Rating</option>
+      </select>
+    </label>
+    <label class="ctl"><span>Min confidence <output id="fConfOut">0</output>%</span><input id="fConf" type="range" min="0" max="90" step="5" value="0"></label>
+    <label class="ctl small"><span>Min price</span><input id="fMin" type="number" min="0" step="100" inputmode="numeric" placeholder="0"></label>
+    <label class="ctl small"><span>Max price</span><input id="fMax" type="number" min="0" step="100" inputmode="numeric" placeholder="∞"></label>
+    <label class="toggle"><input id="fRising" type="checkbox" checked><span>Predicted risers only</span></label>
+    <button class="btn primary" id="logBtn" type="button">+ Log a price</button>
+  </section>
+
+  <p class="result-count" id="resultCount" aria-live="polite"></p>
+  <main id="grid" class="grid" aria-busy="true"></main>
+
+  <footer class="foot">
+    <span id="footStats"></span>
+    <span>Not affiliated with EA SPORTS, FUT.GG or FUTBIN. Forecasts are estimates, not advice.</span>
+  </footer>
+
+  <dialog id="logDialog" aria-labelledby="logTitle">
+    <form id="logForm" method="dialog" novalidate>
+      <h2 id="logTitle">Log a price you observed</h2>
+      <p class="hint">Record the lowest BIN you see on FUT.GG, FUTBIN or the in-game market. Forecasts need at least 6 observations spanning 6+ hours.</p>
+      <div class="form-grid">
+        <label class="span2"><span>Player name *</span><input name="name" required maxlength="60" list="knownPlayers" autocomplete="off"></label>
+        <datalist id="knownPlayers"></datalist>
+        <label><span>Rating *</span><input name="rating" type="number" min="40" max="99" required inputmode="numeric"></label>
+        <label><span>Position *</span><input name="position" required maxlength="3" placeholder="ST"></label>
+        <label><span>Price (coins) *</span><input name="price" type="number" min="150" max="15000000" required inputmode="numeric"></label>
+        <label><span>Listings (optional)</span><input name="listings" type="number" min="0" inputmode="numeric"></label>
+        <label class="span2"><span>Observed at (leave blank for now)</span><input name="observedAt" type="datetime-local"></label>
+        <label class="span2"><span>Source page URL (optional)</span><input name="sourceUrl" type="url" placeholder="https://www.fut.gg/players/…"></label>
+        <label class="span2"><span>Card image URL (optional)</span><input name="imageUrl" type="url" placeholder="https://…"></label>
+      </div>
+      <p class="form-error" id="logError" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="btn ghost" type="button" id="logCancel">Cancel</button>
+        <button class="btn primary" type="submit" id="logSubmit">Save observation</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="cardTpl">
+    <article class="card">
+      <div class="card-head">
+        <div class="art"></div>
+        <div class="who">
+          <h3 class="name"></h3>
+          <div class="tags"></div>
+        </div>
+        <div class="conf"></div>
+      </div>
+      <div class="prices">
+        <div class="price actual">
+          <span class="lbl">Market price <em class="src"></em></span>
+          <span class="val"></span>
+          <span class="age"></span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="price forecast">
+          <span class="lbl">Forecast <em class="hz"></em></span>
+          <span class="val"></span>
+          <span class="range"></span>
+        </div>
+      </div>
+      <div class="deltas"></div>
+      <div class="chart"></div>
+      <ul class="why"></ul>
+      <div class="card-foot"></div>
+    </article>
+  </template>
+
+  <script src="predict.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Prediction Engine Tests</title>
+<style>
+  body { background: #0b0f14; color: #e8edf3; font: 14px/1.5 system-ui, sans-serif; padding: 16px; }
+  .pass { color: #2fd47c; } .fail { color: #ff5d6c; font-weight: 700; }
+  li { margin: 2px 0; } #summary { font-size: 20px; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>FutPredict unit tests</h1>
+<p id="summary">Running…</p>
+<ul id="out"></ul>
+<script src="/predict.js"></script>
+<script>
+(function () {
+  var P = window.FutPredict, H = 3600e3, NOW = Date.UTC(2026, 9, 27, 12);
+  var results = [];
+  function test(name, fn) { try { fn(); results.push([true, name]); } catch (e) { results.push([false, name + ' — ' + e.message]); } }
+  function eq(a, b, m) { if (a !== b) throw new Error((m || '') + ' expected ' + JSON.stringify(b) + ', got ' + JSON.stringify(a)); }
+  function ok(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
+  function series(n, f, stepH) { var s = []; for (var i = n - 1; i >= 0; i--) s.push([NOW - i * (stepH || 1) * H, f(n - 1 - i)]); return s; }
+  function player(hist, extra) { var o = { id: 't', name: 'T', rating: 86, position: 'ST', price: hist[hist.length - 1][1], history: hist }; for (var k in extra) o[k] = extra[k]; return o; }
+
+  test('ladder rounding follows FC increments', function () {
+    eq(P.roundToLadder(149), 150); eq(P.roundToLadder(980), 1000); eq(P.roundToLadder(1049), 1000);
+    eq(P.roundToLadder(12380), 12500); eq(P.roundToLadder(61200), 61000); eq(P.roundToLadder(305400), 305000);
+  });
+  test('cleanSeries drops invalid points, sorts, dedupes', function () {
+    var s = P.cleanSeries([[3, 10], { t: 1, p: 5 }, [2, -1], [null, 4], [3, 12], 'x', [4, 'NaN']]);
+    eq(s.length, 2); eq(s[0].t, 1); eq(s[1].p, 12);
+  });
+  test('rejects too few points', function () { var r = P.predict(player(series(4, function () { return 1000; })), { now: NOW }); eq(r.ok, false); ok(/4 of 6/.test(r.reason)); });
+  test('rejects too short span', function () { var r = P.predict(player(series(8, function () { return 1000; }, 0.5)), { now: NOW }); eq(r.ok, false); ok(/3\.5h/.test(r.reason), r.reason); });
+  test('empty / missing history handled', function () { eq(P.predict({ price: 1000 }, { now: NOW }).ok, false); eq(P.predict({ price: 1000, history: 'x' }, { now: NOW }).ok, false); });
+  test('steady uptrend → rise, ETA set, decent confidence', function () {
+    var r = P.predict(player(series(72, function (i) { return Math.round(20000 * Math.exp(0.002 * i)); })), { now: NOW, horizonH: 24 });
+    ok(r.ok); ok(r.pct > 0.01, 'pct ' + r.pct); ok(r.etaH != null && r.etaH <= 24, 'eta ' + r.etaH); ok(r.confidence >= 45, 'conf ' + r.confidence);
+    ok(r.explanation[0].factor === 'trend' && r.explanation[0].direction === 'up');
+  });
+  test('steady downtrend → fall, no ETA', function () {
+    var r = P.predict(player(series(72, function (i) { return Math.round(20000 * Math.exp(-0.002 * i)); })), { now: NOW });
+    ok(r.pct < 0); eq(r.etaH, null);
+  });
+  test('flat series → near-zero change', function () {
+    var r = P.predict(player(series(72, function (i) { return 5000 + (i % 2 ? 100 : -100); })), { now: NOW });
+    ok(Math.abs(r.pct) < 0.03, 'pct ' + r.pct);
+  });
+  test('math: change, pct and tax are consistent', function () {
+    var r = P.predict(player(series(48, function (i) { return 10000 + i * 40; })), { now: NOW });
+    eq(r.change, r.predicted - r.current); ok(Math.abs(r.pct - r.change / r.current) < 1e-12);
+    eq(r.netAfterTax, Math.round(r.predicted * 0.95 - r.current)); ok(r.low <= r.predicted && r.predicted <= r.high);
+  });
+  test('forecast price lands on the price ladder', function () {
+    var r = P.predict(player(series(48, function (i) { return 31000 + i * 77; })), { now: NOW });
+    eq(r.predicted, P.roundToLadder(r.predicted));
+  });
+  test('upcoming event raises forecast only for eligible players', function () {
+    var h = series(48, function () { return 30000; });
+    var ev = [{ name: 'Promo', start: new Date(NOW + 5 * H).toISOString(), impactPct: 10, minRating: 85 }];
+    var a = P.predict(player(h), { now: NOW, events: ev }), b = P.predict(player(h, { rating: 80 }), { now: NOW, events: ev });
+    ok(a.pct > b.pct, a.pct + ' vs ' + b.pct); ok(a.explanation.some(function (x) { return x.factor === 'events'; }));
+    eq(a.etaH, 5, 'eta should match event start');
+  });
+  test('past events are ignored', function () {
+    var h = series(48, function () { return 30000; });
+    var r = P.predict(player(h), { now: NOW, events: [{ name: 'Old', start: new Date(NOW - H).toISOString(), impactPct: 50 }] });
+    ok(Math.abs(r.pct) < 0.01);
+  });
+  test('shrinking supply is bullish', function () {
+    var h = series(48, function () { return 8000; });
+    var l = series(16, function (i) { return Math.round(800 * Math.pow(0.95, i)); }, 3);
+    var a = P.predict(player(h, { listings: l }), { now: NOW }), b = P.predict(player(h), { now: NOW });
+    ok(a.pct > b.pct); ok(a.factors.supply > 0);
+  });
+  test('stale data reduces confidence', function () {
+    var h = series(72, function (i) { return Math.round(20000 * Math.exp(0.002 * i)); });
+    var a = P.predict(player(h), { now: NOW }), b = P.predict(player(h), { now: NOW + 30 * H });
+    ok(b.confidence < a.confidence, a.confidence + ' vs ' + b.confidence);
+  });
+  test('extreme moves are clamped (±50% log)', function () {
+    var r = P.predict(player(series(24, function (i) { return Math.round(1000 * Math.exp(0.08 * i)); })), { now: NOW, horizonH: 72 });
+    eq(r.predicted, P.roundToLadder(r.current * Math.exp(0.5)), 'clamped forecast');
+  });
+  test('confidence bounded 5..95 and labelled', function () {
+    var r = P.predict(player(series(72, function (i) { return 20000 + i * 100; })), { now: NOW });
+    ok(r.confidence >= 5 && r.confidence <= 95); ok(['High', 'Medium', 'Low'].indexOf(r.confidenceLabel) > -1);
+  });
+  test('curve starts at current price and spans horizon', function () {
+    var r = P.predict(player(series(48, function (i) { return 10000 + i * 50; })), { now: NOW, horizonH: 6 });
+    eq(r.curve[0].p, r.current); eq(r.curve[r.curve.length - 1].t, NOW + 6 * H);
+  });
+
+  var pass = results.filter(function (r) { return r[0]; }).length;
+  var out = document.getElementById('out');
+  results.forEach(function (r) { var li = document.createElement('li'); li.className = r[0] ? 'pass' : 'fail'; li.textContent = (r[0] ? '✔ ' : '✘ ') + r[1]; out.appendChild(li); });
+  var s = document.getElementById('summary');
+  s.textContent = pass + ' / ' + results.length + ' passed';
+  s.className = pass === results.length ? 'pass' : 'fail';
+  window.__testResults = { pass: pass, total: results.length, failures: results.filter(function (r) { return !r[0]; }).map(function (r) { return r[1]; }) };
+})();
+</script>
+</body>
+</html>

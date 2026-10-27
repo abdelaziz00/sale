@@ -1,0 +1,37 @@
+{
+  "port": 8787,
+  "staleAfterSec": 900,
+  "sources": [
+    {
+      "id": "futgg",
+      "name": "FUT.GG",
+      "type": "http",
+      "enabled": false,
+      "endpoint": "",
+      "apiKeyEnv": "FUTGG_FEED_KEY",
+      "apiKeyHeader": "Authorization",
+      "minIntervalSec": 60,
+      "disabledReason": "Not connected. FUT.GG publishes no public API, its robots.txt disallows /api/*, and its Terms forbid automated access unless expressly permitted. Add an endpoint you have written permission or a licence to use (see README) and set enabled to true."
+    },
+    {
+      "id": "futbin",
+      "name": "FUTBIN",
+      "type": "http",
+      "enabled": false,
+      "endpoint": "",
+      "apiKeyEnv": "FUTBIN_FEED_KEY",
+      "apiKeyHeader": "Authorization",
+      "minIntervalSec": 60,
+      "disabledReason": "Not connected. FUTBIN publishes no public API and refuses automated clients (HTTP 403). Add an endpoint you have written permission or a licence to use (see README) and set enabled to true."
+    },
+    {
+      "id": "local",
+      "name": "Your price log",
+      "type": "file",
+      "enabled": true,
+      "path": "data/price-log.json",
+      "minIntervalSec": 5,
+      "disabledReason": ""
+    }
+  ]
+}

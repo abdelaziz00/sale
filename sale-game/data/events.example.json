@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Example promo (edit me)",
+    "start": "2026-11-07T18:00:00Z",
+    "impactPct": 5,
+    "minRating": 85,
+    "positions": ["ST", "CAM"],
+    "playerIds": []
+  }
+]
